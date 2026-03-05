@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>高校教师资格练题站</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero card">
+        <h1>高校教师资格练题站</h1>
+        <p>客观题点击作答，填空题手动输入，提交即判分。</p>
+      </header>
+
+      <section class="filters card">
+        <label>
+          题型
+          <select id="qtypeSelect">
+            <option>全部</option>
+            <option>单选题</option>
+            <option>多选题</option>
+            <option>判断题</option>
+            <option>填空题</option>
+          </select>
+        </label>
+        <label>
+          科目
+          <select id="subjectSelect">
+            <option>全部</option>
+            <option>科目一</option>
+            <option>科目二</option>
+          </select>
+        </label>
+        <label class="switch-row">
+          <input id="randomToggle" type="checkbox" checked />
+          随机出题
+        </label>
+        <button id="resetBtn" class="btn">重新开始</button>
+      </section>
+
+      <section class="stats card" id="stats"></section>
+
+      <section id="questionWrap" class="question-wrap">
+        <article class="question card">
+          <div id="meta" class="meta"></div>
+          <div id="stem" class="stem"></div>
+        </article>
+
+        <article class="answer card">
+          <div id="optionArea"></div>
+          <div id="textAnswerArea" class="hidden">
+            <input id="textAnswerInput" type="text" placeholder="请输入答案" />
+          </div>
+
+          <div class="actions">
+            <button id="prevBtn" class="btn secondary">上一题</button>
+            <button id="submitBtn" class="btn">提交答案</button>
+            <button id="nextBtn" class="btn secondary">下一题</button>
+          </div>
+        </article>
+
+        <article id="resultBox" class="result card hidden"></article>
+      </section>
+
+      <section id="emptyWrap" class="empty card hidden">
+        当前筛选条件下没有题目，请调整筛选项。
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

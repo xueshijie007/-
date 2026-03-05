@@ -104,7 +104,7 @@ function renderOptions(question, record) {
   const multi = question.qtype === "多选题";
 
   question.options.forEach((opt) => {
-    const wrap = document.createElement("div");
+    const wrap = document.createElement("label");
     wrap.className = "option-item";
     const checked = record ? normalizeChoiceAnswer(record.userAnswer).includes(opt.key) : false;
     wrap.innerHTML = `
@@ -114,7 +114,7 @@ function renderOptions(question, record) {
         value="${escapeHtml(opt.key)}"
         ${checked ? "checked" : ""}
       />
-      <label>${escapeHtml(opt.key)}. ${escapeHtml(opt.text)}</label>
+      <span>${escapeHtml(opt.key)}. ${escapeHtml(opt.text)}</span>
     `;
     list.appendChild(wrap);
   });

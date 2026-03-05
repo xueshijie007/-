@@ -114,15 +114,15 @@ body {
   align-items: flex-start;
   gap: 10px;
   background: #f9fff9;
+  cursor: pointer;
 }
 
 .option-item input {
   margin-top: 3px;
 }
 
-.option-item label {
+.option-item span {
   flex: 1;
-  cursor: pointer;
   line-height: 1.6;
 }
 

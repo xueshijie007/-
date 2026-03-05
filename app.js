@@ -3,7 +3,8 @@ const state = {
   pool: [],
   currentIndex: 0,
   records: new Map(),
-  bankSignature: ""
+  bankSignature: "",
+  wrongOnlyMode: false
 };
 
 const STORAGE_KEY = "quiz_site_progress_v1";
@@ -15,6 +16,7 @@ const refs = {
   resetBtn: document.getElementById("resetBtn"),
   clearProgressBtn: document.getElementById("clearProgressBtn"),
   refreshBankBtn: document.getElementById("refreshBankBtn"),
+  wrongOnlyBtn: document.getElementById("wrongOnlyBtn"),
   analyzeWrongBtn: document.getElementById("analyzeWrongBtn"),
   stats: document.getElementById("stats"),
   infoBar: document.getElementById("infoBar"),
@@ -104,11 +106,30 @@ function getCurrentQuestion() {
   return state.pool[state.currentIndex] || null;
 }
 
+function getWrongQuestionIdSet() {
+  const wrongIds = new Set();
+  for (const [id, record] of state.records.entries()) {
+    if (!record.isCorrect) wrongIds.add(id);
+  }
+  return wrongIds;
+}
+
+function updateWrongModeUi() {
+  if (state.wrongOnlyMode) {
+    refs.wrongOnlyBtn.textContent = "退出错题";
+    refs.wrongOnlyBtn.classList.remove("secondary");
+  } else {
+    refs.wrongOnlyBtn.textContent = "只练错题";
+    refs.wrongOnlyBtn.classList.add("secondary");
+  }
+}
+
 function updateStats() {
   const answered = state.records.size;
   const correct = [...state.records.values()].filter((r) => r.isCorrect).length;
   const accuracy = answered ? ((correct / answered) * 100).toFixed(1) : "0.0";
   refs.stats.innerHTML = [
+    `模式 ${state.wrongOnlyMode ? "只练错题" : "全部题目"}`,
     `题量 ${state.pool.length}`,
     `已答 ${answered}`,
     `答对 ${correct}`,
@@ -261,6 +282,7 @@ function saveProgress() {
       qtype: refs.qtypeSelect.value,
       subject: refs.subjectSelect.value,
       randomMode: refs.randomToggle.checked,
+      wrongOnlyMode: state.wrongOnlyMode,
       poolIds: state.pool.map((q) => q.id),
       currentQuestionId: current ? current.id : null,
       records: [...state.records.entries()].map(([id, value]) => ({
@@ -301,6 +323,8 @@ function restoreProgress() {
     refs.subjectSelect.value = saved.subject;
   }
   refs.randomToggle.checked = !!saved.randomMode;
+  state.wrongOnlyMode = !!saved.wrongOnlyMode;
+  updateWrongModeUi();
 
   state.pool = restoredPool;
   state.records = new Map(
@@ -419,7 +443,13 @@ function renderQuestion() {
 function applyFilters() {
   const qtype = refs.qtypeSelect.value;
   const subject = refs.subjectSelect.value;
-  let pool = state.allQuestions.filter((q) => {
+  let base = state.allQuestions;
+  if (state.wrongOnlyMode) {
+    const wrongIds = getWrongQuestionIdSet();
+    base = state.allQuestions.filter((q) => wrongIds.has(q.id));
+  }
+
+  let pool = base.filter((q) => {
     const qtypeOk = qtype === "全部" || q.qtype === qtype;
     const subjectOk = subject === "全部" || q.subject === subject;
     return qtypeOk && subjectOk;
@@ -430,6 +460,8 @@ function applyFilters() {
 }
 
 function resetQuiz() {
+  state.wrongOnlyMode = false;
+  updateWrongModeUi();
   applyFilters();
   state.currentIndex = 0;
   state.records = new Map();
@@ -449,6 +481,40 @@ function clearProgress() {
   resetQuiz();
   refs.analysisBox.classList.add("hidden");
   setInfo("已清空历史进度。");
+}
+
+function toggleWrongOnlyMode() {
+  if (!state.wrongOnlyMode) {
+    const wrongCount = getWrongQuestionIdSet().size;
+    if (!wrongCount) {
+      setInfo("当前没有错题，先做题后再开启只练错题。");
+      return;
+    }
+    state.wrongOnlyMode = true;
+    updateWrongModeUi();
+    applyFilters();
+    state.currentIndex = 0;
+    const hasData = state.pool.length > 0;
+    refs.questionWrap.classList.toggle("hidden", !hasData);
+    refs.emptyWrap.classList.toggle("hidden", hasData);
+    if (hasData) renderQuestion();
+    updateStats();
+    saveProgress();
+    setInfo(`已进入只练错题模式，共 ${state.pool.length} 题。`);
+    return;
+  }
+
+  state.wrongOnlyMode = false;
+  updateWrongModeUi();
+  applyFilters();
+  state.currentIndex = 0;
+  const hasData = state.pool.length > 0;
+  refs.questionWrap.classList.toggle("hidden", !hasData);
+  refs.emptyWrap.classList.toggle("hidden", hasData);
+  if (hasData) renderQuestion();
+  updateStats();
+  saveProgress();
+  setInfo("已退出只练错题模式。");
 }
 
 async function refreshQuestionBank() {
@@ -562,6 +628,7 @@ function bindEvents() {
     if (ok) clearProgress();
   });
   refs.refreshBankBtn.addEventListener("click", refreshQuestionBank);
+  refs.wrongOnlyBtn.addEventListener("click", toggleWrongOnlyMode);
   refs.analyzeWrongBtn.addEventListener("click", renderWrongAnalysis);
   refs.prevBtn.addEventListener("click", prevQuestion);
   refs.submitBtn.addEventListener("click", submitAnswer);

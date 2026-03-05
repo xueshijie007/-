@@ -2,15 +2,21 @@ const state = {
   allQuestions: [],
   pool: [],
   currentIndex: 0,
-  records: new Map()
+  records: new Map(),
+  bankSignature: ""
 };
+
+const STORAGE_KEY = "quiz_site_progress_v1";
 
 const refs = {
   qtypeSelect: document.getElementById("qtypeSelect"),
   subjectSelect: document.getElementById("subjectSelect"),
   randomToggle: document.getElementById("randomToggle"),
   resetBtn: document.getElementById("resetBtn"),
+  clearProgressBtn: document.getElementById("clearProgressBtn"),
+  refreshBankBtn: document.getElementById("refreshBankBtn"),
   stats: document.getElementById("stats"),
+  infoBar: document.getElementById("infoBar"),
   questionWrap: document.getElementById("questionWrap"),
   emptyWrap: document.getElementById("emptyWrap"),
   meta: document.getElementById("meta"),
@@ -31,6 +37,34 @@ function escapeHtml(text) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function computeBankSignature(questions) {
+  let hash = 5381;
+  for (const q of questions) {
+    const token = `${q.id}|${q.qtype}|${q.subject}|${q.answer}|${(q.stem || "").slice(0, 24)}`;
+    for (let i = 0; i < token.length; i += 1) {
+      hash = (hash * 33) ^ token.charCodeAt(i);
+    }
+  }
+  return `${questions.length}-${(hash >>> 0).toString(16)}`;
+}
+
+function setInfo(message = "", isError = false) {
+  if (!message) {
+    refs.infoBar.classList.add("hidden");
+    refs.infoBar.textContent = "";
+    return;
+  }
+  refs.infoBar.classList.remove("hidden");
+  refs.infoBar.textContent = message;
+  refs.infoBar.style.color = isError ? "#c62828" : "";
+}
+
+async function fetchQuestionBank() {
+  const resp = await fetch("./data/questions.json", { cache: "no-store" });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
 }
 
 function normalizeChoiceAnswer(answer) {
@@ -75,6 +109,77 @@ function updateStats() {
   ]
     .map((s) => `<span>${s}</span>`)
     .join("");
+}
+
+function saveProgress() {
+  try {
+    const current = getCurrentQuestion();
+    const payload = {
+      bankSignature: state.bankSignature,
+      qtype: refs.qtypeSelect.value,
+      subject: refs.subjectSelect.value,
+      randomMode: refs.randomToggle.checked,
+      poolIds: state.pool.map((q) => q.id),
+      currentQuestionId: current ? current.id : null,
+      records: [...state.records.entries()].map(([id, value]) => ({
+        id,
+        userAnswer: value.userAnswer,
+        isCorrect: !!value.isCorrect
+      })),
+      savedAt: Date.now()
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  } catch (_err) {
+    // 忽略存储失败（如隐私模式）
+  }
+}
+
+function restoreProgress() {
+  let saved;
+  try {
+    saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+  } catch (_err) {
+    return false;
+  }
+  if (!saved) return false;
+
+  if (saved.bankSignature !== state.bankSignature) {
+    setInfo("检测到题库版本变化，已启用新进度。");
+    return false;
+  }
+
+  const idMap = new Map(state.allQuestions.map((q) => [q.id, q]));
+  const restoredPool = (saved.poolIds || []).map((id) => idMap.get(id)).filter(Boolean);
+  if (!restoredPool.length) return false;
+
+  if (["全部", "单选题", "多选题", "判断题", "填空题"].includes(saved.qtype)) {
+    refs.qtypeSelect.value = saved.qtype;
+  }
+  if (["全部", "科目一", "科目二"].includes(saved.subject)) {
+    refs.subjectSelect.value = saved.subject;
+  }
+  refs.randomToggle.checked = !!saved.randomMode;
+
+  state.pool = restoredPool;
+  state.records = new Map(
+    (saved.records || [])
+      .filter((item) => idMap.has(item.id))
+      .map((item) => [item.id, { userAnswer: item.userAnswer || "", isCorrect: !!item.isCorrect }])
+  );
+
+  const index = state.pool.findIndex((q) => q.id === saved.currentQuestionId);
+  state.currentIndex = index >= 0 ? index : 0;
+
+  refs.questionWrap.classList.toggle("hidden", state.pool.length === 0);
+  refs.emptyWrap.classList.toggle("hidden", state.pool.length > 0);
+
+  if (state.pool.length > 0) {
+    renderQuestion();
+    updateStats();
+    setInfo("已恢复上次练习进度。");
+    return true;
+  }
+  return false;
 }
 
 function setResult(text, isCorrect) {
@@ -193,6 +298,41 @@ function resetQuiz() {
 
   if (hasData) renderQuestion();
   updateStats();
+  setInfo("进度已重置。");
+  saveProgress();
+}
+
+function clearProgress() {
+  localStorage.removeItem(STORAGE_KEY);
+  resetQuiz();
+  setInfo("已清空历史进度。");
+}
+
+async function refreshQuestionBank() {
+  setInfo("正在检查题库更新...");
+  try {
+    const latest = await fetchQuestionBank();
+    const latestSig = computeBankSignature(latest);
+
+    if (latestSig === state.bankSignature) {
+      setInfo("题库已是最新版本。");
+      return;
+    }
+
+    const confirmed = confirm("检测到题库更新，更新后将清空当前进度，是否继续？");
+    if (!confirmed) {
+      setInfo("已取消更新。");
+      return;
+    }
+
+    state.allQuestions = latest;
+    state.bankSignature = latestSig;
+    localStorage.removeItem(STORAGE_KEY);
+    resetQuiz();
+    setInfo("题库已更新到最新版本。");
+  } catch (err) {
+    setInfo(`检查更新失败：${err.message}`, true);
+  }
 }
 
 function getUserAnswer(question) {
@@ -243,12 +383,14 @@ function submitAnswer(options = {}) {
   state.records.set(q.id, { userAnswer, isCorrect });
   setResult(`${isCorrect ? "回答正确" : "回答错误"}。标准答案：${q.answer}`, isCorrect);
   updateStats();
+  saveProgress();
 }
 
 function prevQuestion() {
   if (state.currentIndex <= 0) return;
   state.currentIndex -= 1;
   renderQuestion();
+  saveProgress();
 }
 
 function nextQuestion() {
@@ -261,6 +403,7 @@ function nextQuestion() {
   }
   state.currentIndex += 1;
   renderQuestion();
+  saveProgress();
 }
 
 function bindEvents() {
@@ -268,6 +411,11 @@ function bindEvents() {
   refs.subjectSelect.addEventListener("change", resetQuiz);
   refs.randomToggle.addEventListener("change", resetQuiz);
   refs.resetBtn.addEventListener("click", resetQuiz);
+  refs.clearProgressBtn.addEventListener("click", () => {
+    const ok = confirm("确认清空本地历史进度吗？");
+    if (ok) clearProgress();
+  });
+  refs.refreshBankBtn.addEventListener("click", refreshQuestionBank);
   refs.prevBtn.addEventListener("click", prevQuestion);
   refs.submitBtn.addEventListener("click", submitAnswer);
   refs.nextBtn.addEventListener("click", nextQuestion);
@@ -275,11 +423,14 @@ function bindEvents() {
 
 async function init() {
   try {
-    const resp = await fetch("./data/questions.json", { cache: "no-store" });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    state.allQuestions = await resp.json();
+    state.allQuestions = await fetchQuestionBank();
+    state.bankSignature = computeBankSignature(state.allQuestions);
     bindEvents();
-    resetQuiz();
+    const restored = restoreProgress();
+    if (!restored) {
+      resetQuiz();
+      setInfo("已开启新进度。");
+    }
   } catch (err) {
     refs.questionWrap.classList.add("hidden");
     refs.emptyWrap.classList.remove("hidden");

@@ -323,4 +323,15 @@ body {
   .stem {
     font-size: 17px;
   }
+  /* 手机端答案解析固定到底部，避免必须下滑才能看到 */
+  #resultBox.result:not(.hidden) {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    margin: 0;
+    z-index: 9999;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    border-width: 2px;
+  }
 }

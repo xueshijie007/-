@@ -472,6 +472,8 @@ function setResult(text, isCorrect) {
   }
   refs.resultBox.className = `result card ${isCorrect ? "ok" : "bad"}`;
   refs.resultBox.textContent = text;
+  // 提交后确保答案解析立即进入可视区
+  refs.resultBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function renderOptions(question, record) {

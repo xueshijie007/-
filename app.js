@@ -107,12 +107,14 @@ function renderOptions(question, record) {
     const wrap = document.createElement("div");
     wrap.className = "option-item";
     const checked = record ? normalizeChoiceAnswer(record.userAnswer).includes(opt.key) : false;
+    const disabled = !!record;
     wrap.innerHTML = `
       <input
         type="${multi ? "checkbox" : "radio"}"
         name="optionAnswer"
         value="${escapeHtml(opt.key)}"
         ${checked ? "checked" : ""}
+        ${disabled ? "disabled" : ""}
       />
       <span>${escapeHtml(opt.key)}. ${escapeHtml(opt.text)}</span>
     `;
@@ -121,6 +123,14 @@ function renderOptions(question, record) {
       const input = wrap.querySelector('input[name="optionAnswer"]');
       if (input) input.click();
     });
+
+    // 单选/判断题：点选后立即判题
+    if (!multi && !record) {
+      const input = wrap.querySelector('input[name="optionAnswer"]');
+      if (input) {
+        input.addEventListener("change", () => submitAnswer());
+      }
+    }
     list.appendChild(wrap);
   });
   refs.optionArea.appendChild(list);

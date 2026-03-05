@@ -4,12 +4,29 @@ const state = {
   currentIndex: 0,
   records: new Map(),
   bankSignature: "",
-  wrongOnlyMode: false
+  wrongOnlyMode: false,
+  highWrongMode: false,
+  wrongStats: new Map(),
+  quizReady: false,
+  currentUser: ""
 };
 
 const STORAGE_KEY = "quiz_site_progress_v1";
+const HIGH_WRONG_THRESHOLD = 2;
+const AUTH_USER_KEY = "quiz_site_single_user_v1";
+const AUTH_SESSION_KEY = "quiz_site_single_session_v1";
 
 const refs = {
+  appMain: document.getElementById("appMain"),
+  authGate: document.getElementById("authGate"),
+  authTitle: document.getElementById("authTitle"),
+  authHint: document.getElementById("authHint"),
+  authUserInput: document.getElementById("authUserInput"),
+  authPassInput: document.getElementById("authPassInput"),
+  authSubmitBtn: document.getElementById("authSubmitBtn"),
+  authMsg: document.getElementById("authMsg"),
+  currentUserBadge: document.getElementById("currentUserBadge"),
+  logoutBtn: document.getElementById("logoutBtn"),
   qtypeSelect: document.getElementById("qtypeSelect"),
   subjectSelect: document.getElementById("subjectSelect"),
   randomToggle: document.getElementById("randomToggle"),
@@ -17,6 +34,9 @@ const refs = {
   clearProgressBtn: document.getElementById("clearProgressBtn"),
   refreshBankBtn: document.getElementById("refreshBankBtn"),
   wrongOnlyBtn: document.getElementById("wrongOnlyBtn"),
+  highWrongBtn: document.getElementById("highWrongBtn"),
+  exportHighWrongBtn: document.getElementById("exportHighWrongBtn"),
+  clearHighWrongBtn: document.getElementById("clearHighWrongBtn"),
   analyzeWrongBtn: document.getElementById("analyzeWrongBtn"),
   stats: document.getElementById("stats"),
   infoBar: document.getElementById("infoBar"),
@@ -52,6 +72,59 @@ function computeBankSignature(questions) {
     }
   }
   return `${questions.length}-${(hash >>> 0).toString(16)}`;
+}
+
+function readJsonStorage(key) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || "null");
+  } catch (_err) {
+    return null;
+  }
+}
+
+function writeJsonStorage(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function randomSaltHex() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Hex(text) {
+  const data = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function hashPassword(password, salt) {
+  return sha256Hex(`${salt}:${password}`);
+}
+
+function getStoredSingleUser() {
+  return readJsonStorage(AUTH_USER_KEY);
+}
+
+function setAuthMessage(message, isError = false) {
+  refs.authMsg.textContent = message || "";
+  refs.authMsg.style.color = isError ? "#c62828" : "";
+}
+
+function showAuthMode(registerMode) {
+  refs.authTitle.textContent = registerMode ? "创建单用户账号" : "登录";
+  refs.authHint.textContent = registerMode
+    ? "首次使用请注册一个账号，后续仅该账号可登录。"
+    : "请输入已注册的账号密码。";
+  refs.authSubmitBtn.textContent = registerMode ? "注册并进入" : "登录进入";
+  setAuthMessage("");
+}
+
+function setLoginState(username) {
+  state.currentUser = username || "";
+  refs.currentUserBadge.textContent = username ? `当前用户：${username}` : "未登录";
+  refs.appMain.classList.toggle("hidden", !username);
+  refs.authGate.classList.toggle("hidden", !!username);
 }
 
 function setInfo(message = "", isError = false) {
@@ -114,6 +187,14 @@ function getWrongQuestionIdSet() {
   return wrongIds;
 }
 
+function getHighWrongIdSet() {
+  const ids = new Set();
+  for (const [id, count] of state.wrongStats.entries()) {
+    if (count >= HIGH_WRONG_THRESHOLD) ids.add(id);
+  }
+  return ids;
+}
+
 function updateWrongModeUi() {
   if (state.wrongOnlyMode) {
     refs.wrongOnlyBtn.textContent = "退出错题";
@@ -122,15 +203,26 @@ function updateWrongModeUi() {
     refs.wrongOnlyBtn.textContent = "只练错题";
     refs.wrongOnlyBtn.classList.add("secondary");
   }
+
+  if (state.highWrongMode) {
+    refs.highWrongBtn.textContent = "退出高频池";
+    refs.highWrongBtn.classList.remove("secondary");
+  } else {
+    refs.highWrongBtn.textContent = "高频错题池";
+    refs.highWrongBtn.classList.add("secondary");
+  }
 }
 
 function updateStats() {
   const answered = state.records.size;
   const correct = [...state.records.values()].filter((r) => r.isCorrect).length;
   const accuracy = answered ? ((correct / answered) * 100).toFixed(1) : "0.0";
+  const highWrongCount = getHighWrongIdSet().size;
+  const modeText = state.highWrongMode ? "高频错题池" : state.wrongOnlyMode ? "只练错题" : "全部题目";
   refs.stats.innerHTML = [
-    `模式 ${state.wrongOnlyMode ? "只练错题" : "全部题目"}`,
+    `模式 ${modeText}`,
     `题量 ${state.pool.length}`,
+    `高频错题 ${highWrongCount}`,
     `已答 ${answered}`,
     `答对 ${correct}`,
     `正确率 ${accuracy}%`
@@ -155,15 +247,16 @@ function buildWrongAnalysisHtml() {
   const details = getDetailedRecords();
   const answered = details.length;
   const wrongs = details.filter((d) => !d.isCorrect);
+  const highWrongIds = getHighWrongIdSet();
 
-  if (!answered) {
+  if (!answered && !highWrongIds.size) {
     return `
       <h3>智能分析错题集</h3>
       <div class="summary">你还没有提交过题目，先做几题再来分析。</div>
     `;
   }
 
-  if (!wrongs.length) {
+  if (!wrongs.length && !highWrongIds.size) {
     return `
       <h3>智能分析错题集</h3>
       <div class="summary">已作答 ${answered} 题，当前错题为 0，继续保持。</div>
@@ -244,6 +337,17 @@ function buildWrongAnalysisHtml() {
     })
     .join("");
 
+  const highWrongRows = state.allQuestions
+    .filter((q) => highWrongIds.has(q.id))
+    .sort((a, b) => (state.wrongStats.get(b.id) || 0) - (state.wrongStats.get(a.id) || 0))
+    .slice(0, 6)
+    .map((q) => {
+      const shortStem = escapeHtml(q.stem.length > 45 ? `${q.stem.slice(0, 45)}...` : q.stem);
+      const cnt = state.wrongStats.get(q.id) || 0;
+      return `<li>[${escapeHtml(q.qtype)}] ${shortStem}（累计错 ${cnt} 次）</li>`;
+    })
+    .join("");
+
   return `
     <h3>智能分析错题集</h3>
     <div class="summary">已答 ${answered} 题，错题 ${wrongs.length} 题，整体错误率 ${formatPct(wrongs.length, answered)}。</div>
@@ -264,7 +368,11 @@ function buildWrongAnalysisHtml() {
     </div>
     <div class="analysis-card">
       <h4>最近错题（最多 6 题）</h4>
-      <ol class="analysis-list">${latestWrongs}</ol>
+      <ol class="analysis-list">${latestWrongs || "<li>暂无本轮错题记录</li>"}</ol>
+    </div>
+    <div class="analysis-card" style="margin-top:10px;">
+      <h4>历史高频错题（累计）</h4>
+      <ol class="analysis-list">${highWrongRows || "<li>暂无高频错题（累计错题次数未达到阈值）</li>"}</ol>
     </div>
   `;
 }
@@ -283,6 +391,7 @@ function saveProgress() {
       subject: refs.subjectSelect.value,
       randomMode: refs.randomToggle.checked,
       wrongOnlyMode: state.wrongOnlyMode,
+      highWrongMode: state.highWrongMode,
       poolIds: state.pool.map((q) => q.id),
       currentQuestionId: current ? current.id : null,
       records: [...state.records.entries()].map(([id, value]) => ({
@@ -290,6 +399,7 @@ function saveProgress() {
         userAnswer: value.userAnswer,
         isCorrect: !!value.isCorrect
       })),
+      wrongStats: [...state.wrongStats.entries()].map(([id, count]) => ({ id, count })),
       savedAt: Date.now()
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -324,6 +434,7 @@ function restoreProgress() {
   }
   refs.randomToggle.checked = !!saved.randomMode;
   state.wrongOnlyMode = !!saved.wrongOnlyMode;
+  state.highWrongMode = !!saved.highWrongMode;
   updateWrongModeUi();
 
   state.pool = restoredPool;
@@ -331,6 +442,11 @@ function restoreProgress() {
     (saved.records || [])
       .filter((item) => idMap.has(item.id))
       .map((item) => [item.id, { userAnswer: item.userAnswer || "", isCorrect: !!item.isCorrect }])
+  );
+  state.wrongStats = new Map(
+    (saved.wrongStats || [])
+      .filter((item) => idMap.has(item.id))
+      .map((item) => [item.id, Math.max(0, Number(item.count) || 0)])
   );
 
   const index = state.pool.findIndex((q) => q.id === saved.currentQuestionId);
@@ -444,7 +560,10 @@ function applyFilters() {
   const qtype = refs.qtypeSelect.value;
   const subject = refs.subjectSelect.value;
   let base = state.allQuestions;
-  if (state.wrongOnlyMode) {
+  if (state.highWrongMode) {
+    const highWrongIds = getHighWrongIdSet();
+    base = state.allQuestions.filter((q) => highWrongIds.has(q.id));
+  } else if (state.wrongOnlyMode) {
     const wrongIds = getWrongQuestionIdSet();
     base = state.allQuestions.filter((q) => wrongIds.has(q.id));
   }
@@ -461,6 +580,7 @@ function applyFilters() {
 
 function resetQuiz() {
   state.wrongOnlyMode = false;
+  state.highWrongMode = false;
   updateWrongModeUi();
   applyFilters();
   state.currentIndex = 0;
@@ -478,12 +598,16 @@ function resetQuiz() {
 
 function clearProgress() {
   localStorage.removeItem(STORAGE_KEY);
+  state.wrongStats = new Map();
   resetQuiz();
   refs.analysisBox.classList.add("hidden");
   setInfo("已清空历史进度。");
 }
 
 function toggleWrongOnlyMode() {
+  if (state.highWrongMode) {
+    state.highWrongMode = false;
+  }
   if (!state.wrongOnlyMode) {
     const wrongCount = getWrongQuestionIdSet().size;
     if (!wrongCount) {
@@ -517,6 +641,100 @@ function toggleWrongOnlyMode() {
   setInfo("已退出只练错题模式。");
 }
 
+function toggleHighWrongMode() {
+  if (state.wrongOnlyMode) {
+    state.wrongOnlyMode = false;
+  }
+
+  if (!state.highWrongMode) {
+    const highCount = getHighWrongIdSet().size;
+    if (!highCount) {
+      setInfo(`当前没有高频错题（阈值 >= ${HIGH_WRONG_THRESHOLD} 次）。`);
+      return;
+    }
+    state.highWrongMode = true;
+    updateWrongModeUi();
+    applyFilters();
+    state.currentIndex = 0;
+    const hasData = state.pool.length > 0;
+    refs.questionWrap.classList.toggle("hidden", !hasData);
+    refs.emptyWrap.classList.toggle("hidden", hasData);
+    if (hasData) renderQuestion();
+    updateStats();
+    saveProgress();
+    setInfo(`已进入高频错题池，共 ${state.pool.length} 题。`);
+    return;
+  }
+
+  state.highWrongMode = false;
+  updateWrongModeUi();
+  applyFilters();
+  state.currentIndex = 0;
+  const hasData = state.pool.length > 0;
+  refs.questionWrap.classList.toggle("hidden", !hasData);
+  refs.emptyWrap.classList.toggle("hidden", hasData);
+  if (hasData) renderQuestion();
+  updateStats();
+  saveProgress();
+  setInfo("已退出高频错题池。");
+}
+
+function exportHighWrongPool() {
+  const ids = getHighWrongIdSet();
+  if (!ids.size) {
+    setInfo(`当前没有高频错题（阈值 >= ${HIGH_WRONG_THRESHOLD} 次）。`);
+    return;
+  }
+
+  const rows = state.allQuestions
+    .filter((q) => ids.has(q.id))
+    .map((q) => ({
+      id: q.id,
+      qtype: q.qtype,
+      subject: q.subject,
+      wrongCount: state.wrongStats.get(q.id) || 0,
+      stem: q.stem,
+      options: q.options,
+      answer: q.answer
+    }));
+
+  const blob = new Blob([JSON.stringify(rows, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 19).replaceAll(":", "-");
+  a.href = url;
+  a.download = `high-wrong-pool-${stamp}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  setInfo(`已导出高频错题 ${rows.length} 题。`);
+}
+
+function clearHighWrongPool() {
+  const ids = getHighWrongIdSet();
+  if (!ids.size) {
+    setInfo("高频错题池已为空。");
+    return;
+  }
+  for (const id of ids) {
+    state.wrongStats.delete(id);
+  }
+
+  if (state.highWrongMode) {
+    state.highWrongMode = false;
+  }
+
+  updateWrongModeUi();
+  applyFilters();
+  state.currentIndex = 0;
+  const hasData = state.pool.length > 0;
+  refs.questionWrap.classList.toggle("hidden", !hasData);
+  refs.emptyWrap.classList.toggle("hidden", hasData);
+  if (hasData) renderQuestion();
+  updateStats();
+  saveProgress();
+  setInfo("已清空高频错题池。");
+}
+
 async function refreshQuestionBank() {
   setInfo("正在检查题库更新...");
   try {
@@ -536,6 +754,7 @@ async function refreshQuestionBank() {
 
     state.allQuestions = latest;
     state.bankSignature = latestSig;
+    state.wrongStats = new Map();
     localStorage.removeItem(STORAGE_KEY);
     resetQuiz();
     setInfo("题库已更新到最新版本。");
@@ -590,6 +809,9 @@ function submitAnswer(options = {}) {
 
   const isCorrect = checkAnswer(q, userAnswer);
   state.records.set(q.id, { userAnswer, isCorrect });
+  if (!isCorrect) {
+    state.wrongStats.set(q.id, (state.wrongStats.get(q.id) || 0) + 1);
+  }
   setResult(`${isCorrect ? "回答正确" : "回答错误"}。标准答案：${q.answer}`, isCorrect);
   updateStats();
   saveProgress();
@@ -618,7 +840,7 @@ function nextQuestion() {
   saveProgress();
 }
 
-function bindEvents() {
+function bindQuizEvents() {
   refs.qtypeSelect.addEventListener("change", resetQuiz);
   refs.subjectSelect.addEventListener("change", resetQuiz);
   refs.randomToggle.addEventListener("change", resetQuiz);
@@ -629,26 +851,145 @@ function bindEvents() {
   });
   refs.refreshBankBtn.addEventListener("click", refreshQuestionBank);
   refs.wrongOnlyBtn.addEventListener("click", toggleWrongOnlyMode);
+  refs.highWrongBtn.addEventListener("click", toggleHighWrongMode);
+  refs.exportHighWrongBtn.addEventListener("click", exportHighWrongPool);
+  refs.clearHighWrongBtn.addEventListener("click", () => {
+    const ok = confirm(`确认清空高频错题池（错题次数 >= ${HIGH_WRONG_THRESHOLD}）吗？`);
+    if (ok) clearHighWrongPool();
+  });
   refs.analyzeWrongBtn.addEventListener("click", renderWrongAnalysis);
   refs.prevBtn.addEventListener("click", prevQuestion);
   refs.submitBtn.addEventListener("click", submitAnswer);
   refs.nextBtn.addEventListener("click", nextQuestion);
 }
 
+async function ensureQuizReady() {
+  if (state.quizReady) return;
+  state.allQuestions = await fetchQuestionBank();
+  state.bankSignature = computeBankSignature(state.allQuestions);
+  bindQuizEvents();
+  const restored = restoreProgress();
+  if (!restored) {
+    resetQuiz();
+    setInfo("已开启新进度。");
+  }
+  state.quizReady = true;
+}
+
+function saveSession(username) {
+  writeJsonStorage(AUTH_SESSION_KEY, { username, at: Date.now() });
+}
+
+function clearSession() {
+  localStorage.removeItem(AUTH_SESSION_KEY);
+}
+
+function getSessionUsername() {
+  const session = readJsonStorage(AUTH_SESSION_KEY);
+  const user = getStoredSingleUser();
+  if (!session || !user) return "";
+  if (session.username !== user.username) return "";
+  return session.username || "";
+}
+
+async function handleAuthSubmit() {
+  const username = (refs.authUserInput.value || "").trim();
+  const password = refs.authPassInput.value || "";
+  if (!username || !password) {
+    setAuthMessage("请输入用户名和密码。", true);
+    return;
+  }
+  if (password.length < 4) {
+    setAuthMessage("密码至少 4 位。", true);
+    return;
+  }
+
+  const stored = getStoredSingleUser();
+  const registerMode = !stored;
+
+  if (registerMode) {
+    const salt = randomSaltHex();
+    const passwordHash = await hashPassword(password, salt);
+    writeJsonStorage(AUTH_USER_KEY, {
+      username,
+      salt,
+      passwordHash,
+      createdAt: Date.now()
+    });
+    saveSession(username);
+    setLoginState(username);
+    setAuthMessage("");
+    refs.authPassInput.value = "";
+    await ensureQuizReady();
+    setInfo("账号已创建并登录。");
+    return;
+  }
+
+  if (username !== stored.username) {
+    setAuthMessage("用户名不匹配。该站点仅支持已注册账号登录。", true);
+    return;
+  }
+  const inputHash = await hashPassword(password, stored.salt);
+  if (inputHash !== stored.passwordHash) {
+    setAuthMessage("密码错误。", true);
+    return;
+  }
+
+  saveSession(username);
+  setLoginState(username);
+  setAuthMessage("");
+  refs.authPassInput.value = "";
+  await ensureQuizReady();
+}
+
+function bindAuthEvents() {
+  refs.authSubmitBtn.addEventListener("click", () => {
+    handleAuthSubmit().catch((err) => {
+      setAuthMessage(`登录失败：${err.message}`, true);
+    });
+  });
+  refs.authPassInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      handleAuthSubmit().catch((err) => {
+        setAuthMessage(`登录失败：${err.message}`, true);
+      });
+    }
+  });
+  refs.logoutBtn.addEventListener("click", () => {
+    clearSession();
+    setLoginState("");
+    const hasUser = !!getStoredSingleUser();
+    showAuthMode(!hasUser);
+    refs.authUserInput.value = hasUser ? getStoredSingleUser().username : "";
+    refs.authPassInput.value = "";
+    if (hasUser) refs.authUserInput.setAttribute("readonly", "readonly");
+    else refs.authUserInput.removeAttribute("readonly");
+  });
+}
+
 async function init() {
   try {
-    state.allQuestions = await fetchQuestionBank();
-    state.bankSignature = computeBankSignature(state.allQuestions);
-    bindEvents();
-    const restored = restoreProgress();
-    if (!restored) {
-      resetQuiz();
-      setInfo("已开启新进度。");
+    bindAuthEvents();
+    const existingUser = getStoredSingleUser();
+    const registerMode = !existingUser;
+    showAuthMode(registerMode);
+
+    if (existingUser) {
+      refs.authUserInput.value = existingUser.username;
+      refs.authUserInput.setAttribute("readonly", "readonly");
+    } else {
+      refs.authUserInput.removeAttribute("readonly");
+    }
+
+    const sessionUser = getSessionUsername();
+    if (sessionUser) {
+      setLoginState(sessionUser);
+      await ensureQuizReady();
+    } else {
+      setLoginState("");
     }
   } catch (err) {
-    refs.questionWrap.classList.add("hidden");
-    refs.emptyWrap.classList.remove("hidden");
-    refs.emptyWrap.textContent = `题库加载失败：${err.message}`;
+    setAuthMessage(`初始化失败：${err.message}`, true);
   }
 }
 

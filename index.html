@@ -7,30 +7,9 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <section id="authGate" class="auth-gate">
-      <div class="auth-card">
-        <h2 id="authTitle">账号验证</h2>
-        <p id="authHint">请先登录后使用题库。</p>
-        <label class="auth-field">
-          用户名
-          <input id="authUserInput" type="text" autocomplete="username" placeholder="请输入用户名" />
-        </label>
-        <label class="auth-field">
-          密码
-          <input id="authPassInput" type="password" autocomplete="current-password" placeholder="请输入密码" />
-        </label>
-        <button id="authSubmitBtn" class="btn auth-btn">进入</button>
-        <div id="authMsg" class="auth-msg"></div>
-      </div>
-    </section>
-
-    <main id="appMain" class="page hidden">
+    <main id="appMain" class="page">
       <header class="hero card">
         <h1>高校教师资格练题站</h1>
-        <div class="user-row">
-          <span id="currentUserBadge" class="user-badge">未登录</span>
-          <button id="logoutBtn" class="btn secondary">退出登录</button>
-        </div>
         <p>客观题点击作答，填空题手动输入，提交即判分。</p>
       </header>
 
@@ -98,6 +77,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=20260305j"></script>
+    <script src="./app.js?v=20260305k"></script>
   </body>
 </html>

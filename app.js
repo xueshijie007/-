@@ -7,26 +7,14 @@ const state = {
   wrongOnlyMode: false,
   highWrongMode: false,
   wrongStats: new Map(),
-  quizReady: false,
-  currentUser: ""
+  quizReady: false
 };
 
 const STORAGE_KEY = "quiz_site_progress_v1";
 const HIGH_WRONG_THRESHOLD = 2;
-const AUTH_USER_KEY = "quiz_site_single_user_v1";
-const AUTH_SESSION_KEY = "quiz_site_single_session_v1";
 
 const refs = {
   appMain: document.getElementById("appMain"),
-  authGate: document.getElementById("authGate"),
-  authTitle: document.getElementById("authTitle"),
-  authHint: document.getElementById("authHint"),
-  authUserInput: document.getElementById("authUserInput"),
-  authPassInput: document.getElementById("authPassInput"),
-  authSubmitBtn: document.getElementById("authSubmitBtn"),
-  authMsg: document.getElementById("authMsg"),
-  currentUserBadge: document.getElementById("currentUserBadge"),
-  logoutBtn: document.getElementById("logoutBtn"),
   qtypeSelect: document.getElementById("qtypeSelect"),
   subjectSelect: document.getElementById("subjectSelect"),
   randomToggle: document.getElementById("randomToggle"),
@@ -84,47 +72,6 @@ function readJsonStorage(key) {
 
 function writeJsonStorage(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
-}
-
-function randomSaltHex() {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-async function sha256Hex(text) {
-  const data = new TextEncoder().encode(text);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-async function hashPassword(password, salt) {
-  return sha256Hex(`${salt}:${password}`);
-}
-
-function getStoredSingleUser() {
-  return readJsonStorage(AUTH_USER_KEY);
-}
-
-function setAuthMessage(message, isError = false) {
-  refs.authMsg.textContent = message || "";
-  refs.authMsg.style.color = isError ? "#c62828" : "";
-}
-
-function showAuthMode(registerMode) {
-  refs.authTitle.textContent = registerMode ? "创建单用户账号" : "登录";
-  refs.authHint.textContent = registerMode
-    ? "首次使用请注册一个账号，后续仅该账号可登录。"
-    : "请输入已注册的账号密码。";
-  refs.authSubmitBtn.textContent = registerMode ? "注册并进入" : "登录进入";
-  setAuthMessage("");
-}
-
-function setLoginState(username) {
-  state.currentUser = username || "";
-  refs.currentUserBadge.textContent = username ? `当前用户：${username}` : "未登录";
-  refs.appMain.classList.toggle("hidden", !username);
-  refs.authGate.classList.toggle("hidden", !!username);
 }
 
 function setInfo(message = "", isError = false) {
@@ -878,120 +825,11 @@ async function ensureQuizReady() {
   state.quizReady = true;
 }
 
-function saveSession(username) {
-  writeJsonStorage(AUTH_SESSION_KEY, { username, at: Date.now() });
-}
-
-function clearSession() {
-  localStorage.removeItem(AUTH_SESSION_KEY);
-}
-
-function getSessionUsername() {
-  const session = readJsonStorage(AUTH_SESSION_KEY);
-  const user = getStoredSingleUser();
-  if (!session || !user) return "";
-  if (session.username !== user.username) return "";
-  return session.username || "";
-}
-
-async function handleAuthSubmit() {
-  const username = (refs.authUserInput.value || "").trim();
-  const password = refs.authPassInput.value || "";
-  if (!username || !password) {
-    setAuthMessage("请输入用户名和密码。", true);
-    return;
-  }
-  if (password.length < 4) {
-    setAuthMessage("密码至少 4 位。", true);
-    return;
-  }
-
-  const stored = getStoredSingleUser();
-  const registerMode = !stored;
-
-  if (registerMode) {
-    const salt = randomSaltHex();
-    const passwordHash = await hashPassword(password, salt);
-    writeJsonStorage(AUTH_USER_KEY, {
-      username,
-      salt,
-      passwordHash,
-      createdAt: Date.now()
-    });
-    saveSession(username);
-    setLoginState(username);
-    setAuthMessage("");
-    refs.authPassInput.value = "";
-    await ensureQuizReady();
-    setInfo("账号已创建并登录。");
-    return;
-  }
-
-  if (username !== stored.username) {
-    setAuthMessage("用户名不匹配。该站点仅支持已注册账号登录。", true);
-    return;
-  }
-  const inputHash = await hashPassword(password, stored.salt);
-  if (inputHash !== stored.passwordHash) {
-    setAuthMessage("密码错误。", true);
-    return;
-  }
-
-  saveSession(username);
-  setLoginState(username);
-  setAuthMessage("");
-  refs.authPassInput.value = "";
-  await ensureQuizReady();
-}
-
-function bindAuthEvents() {
-  refs.authSubmitBtn.addEventListener("click", () => {
-    handleAuthSubmit().catch((err) => {
-      setAuthMessage(`登录失败：${err.message}`, true);
-    });
-  });
-  refs.authPassInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      handleAuthSubmit().catch((err) => {
-        setAuthMessage(`登录失败：${err.message}`, true);
-      });
-    }
-  });
-  refs.logoutBtn.addEventListener("click", () => {
-    clearSession();
-    setLoginState("");
-    const hasUser = !!getStoredSingleUser();
-    showAuthMode(!hasUser);
-    refs.authUserInput.value = hasUser ? getStoredSingleUser().username : "";
-    refs.authPassInput.value = "";
-    if (hasUser) refs.authUserInput.setAttribute("readonly", "readonly");
-    else refs.authUserInput.removeAttribute("readonly");
-  });
-}
-
 async function init() {
   try {
-    bindAuthEvents();
-    const existingUser = getStoredSingleUser();
-    const registerMode = !existingUser;
-    showAuthMode(registerMode);
-
-    if (existingUser) {
-      refs.authUserInput.value = existingUser.username;
-      refs.authUserInput.setAttribute("readonly", "readonly");
-    } else {
-      refs.authUserInput.removeAttribute("readonly");
-    }
-
-    const sessionUser = getSessionUsername();
-    if (sessionUser) {
-      setLoginState(sessionUser);
-      await ensureQuizReady();
-    } else {
-      setLoginState("");
-    }
+    await ensureQuizReady();
   } catch (err) {
-    setAuthMessage(`初始化失败：${err.message}`, true);
+    setInfo(`初始化失败：${err.message}`, true);
   }
 }
 

@@ -15,8 +15,10 @@ const refs = {
   resetBtn: document.getElementById("resetBtn"),
   clearProgressBtn: document.getElementById("clearProgressBtn"),
   refreshBankBtn: document.getElementById("refreshBankBtn"),
+  analyzeWrongBtn: document.getElementById("analyzeWrongBtn"),
   stats: document.getElementById("stats"),
   infoBar: document.getElementById("infoBar"),
+  analysisBox: document.getElementById("analysisBox"),
   questionWrap: document.getElementById("questionWrap"),
   emptyWrap: document.getElementById("emptyWrap"),
   meta: document.getElementById("meta"),
@@ -59,6 +61,11 @@ function setInfo(message = "", isError = false) {
   refs.infoBar.classList.remove("hidden");
   refs.infoBar.textContent = message;
   refs.infoBar.style.color = isError ? "#c62828" : "";
+}
+
+function formatPct(numerator, denominator) {
+  if (!denominator) return "0.0%";
+  return `${((numerator / denominator) * 100).toFixed(1)}%`;
 }
 
 async function fetchQuestionBank() {
@@ -109,6 +116,141 @@ function updateStats() {
   ]
     .map((s) => `<span>${s}</span>`)
     .join("");
+}
+
+function getDetailedRecords() {
+  const questionMap = new Map(state.allQuestions.map((q) => [q.id, q]));
+  return [...state.records.entries()]
+    .map(([id, record]) => ({
+      id,
+      question: questionMap.get(id),
+      userAnswer: record.userAnswer,
+      isCorrect: record.isCorrect
+    }))
+    .filter((x) => x.question);
+}
+
+function buildWrongAnalysisHtml() {
+  const details = getDetailedRecords();
+  const answered = details.length;
+  const wrongs = details.filter((d) => !d.isCorrect);
+
+  if (!answered) {
+    return `
+      <h3>智能分析错题集</h3>
+      <div class="summary">你还没有提交过题目，先做几题再来分析。</div>
+    `;
+  }
+
+  if (!wrongs.length) {
+    return `
+      <h3>智能分析错题集</h3>
+      <div class="summary">已作答 ${answered} 题，当前错题为 0，继续保持。</div>
+    `;
+  }
+
+  const qtypeStat = {};
+  const subjectStat = {};
+  const wrongOptionStat = {};
+
+  details.forEach((d) => {
+    const { qtype, subject } = d.question;
+    if (!qtypeStat[qtype]) qtypeStat[qtype] = { answered: 0, wrong: 0 };
+    qtypeStat[qtype].answered += 1;
+    if (!d.isCorrect) qtypeStat[qtype].wrong += 1;
+
+    if (!subjectStat[subject]) subjectStat[subject] = { answered: 0, wrong: 0 };
+    subjectStat[subject].answered += 1;
+    if (!d.isCorrect) subjectStat[subject].wrong += 1;
+
+    if (!d.isCorrect && d.question.options && d.question.options.length) {
+      const chosen = normalizeChoiceAnswer(d.userAnswer);
+      if (chosen) {
+        for (const letter of chosen) {
+          wrongOptionStat[letter] = (wrongOptionStat[letter] || 0) + 1;
+        }
+      }
+    }
+  });
+
+  const qtypeItems = Object.entries(qtypeStat)
+    .sort((a, b) => b[1].wrong - a[1].wrong)
+    .map(
+      ([name, v]) =>
+        `<li><strong>${escapeHtml(name)}</strong>：错 ${v.wrong} / ${v.answered}（${formatPct(v.wrong, v.answered)}）</li>`
+    )
+    .join("");
+
+  const subjectItems = Object.entries(subjectStat)
+    .sort((a, b) => b[1].wrong - a[1].wrong)
+    .map(
+      ([name, v]) =>
+        `<li><strong>${escapeHtml(name)}</strong>：错 ${v.wrong} / ${v.answered}（${formatPct(v.wrong, v.answered)}）</li>`
+    )
+    .join("");
+
+  const optionItems = Object.entries(wrongOptionStat)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([k, v]) => `<li>选项 <strong>${escapeHtml(k)}</strong>：误选/误判 ${v} 次</li>`)
+    .join("");
+
+  const mainWeak = Object.entries(qtypeStat).sort((a, b) => b[1].wrong - a[1].wrong)[0];
+  const subjectWeak = Object.entries(subjectStat).sort((a, b) => b[1].wrong - a[1].wrong)[0];
+
+  const tips = [];
+  if (mainWeak && mainWeak[1].wrong > 0) {
+    tips.push(`优先复盘「${mainWeak[0]}」：这是你当前错题最多的题型。`);
+  }
+  if (subjectWeak && subjectWeak[1].wrong > 0) {
+    tips.push(`优先刷「${subjectWeak[0]}」：该科目当前错题更集中。`);
+  }
+  if (wrongOptionStat.B > (wrongOptionStat.A || 0) + (wrongOptionStat.D || 0)) {
+    tips.push("你对中间选项存在偏好，建议先排除明显错误项再选。");
+  }
+  if (!tips.length) {
+    tips.push("建议每次先做 20 题，再针对错题二刷一遍。");
+  }
+
+  const latestWrongs = wrongs
+    .slice(-6)
+    .reverse()
+    .map((d) => {
+      const shortStem = escapeHtml(d.question.stem.length > 45 ? `${d.question.stem.slice(0, 45)}...` : d.question.stem);
+      return `<li>[${escapeHtml(d.question.qtype)}] ${shortStem}<br/>你的答案：${escapeHtml(
+        d.userAnswer || "(空)"
+      )}；正确答案：${escapeHtml(d.question.answer)}</li>`;
+    })
+    .join("");
+
+  return `
+    <h3>智能分析错题集</h3>
+    <div class="summary">已答 ${answered} 题，错题 ${wrongs.length} 题，整体错误率 ${formatPct(wrongs.length, answered)}。</div>
+    <div class="analysis-tip">${escapeHtml(tips.join(" "))}</div>
+    <div class="analysis-grid">
+      <div class="analysis-card">
+        <h4>按题型错题分布</h4>
+        <ol class="analysis-list">${qtypeItems}</ol>
+      </div>
+      <div class="analysis-card">
+        <h4>按科目错题分布</h4>
+        <ol class="analysis-list">${subjectItems}</ol>
+      </div>
+      <div class="analysis-card">
+        <h4>高频误选项</h4>
+        <ol class="analysis-list">${optionItems || "<li>暂无客观题误选数据</li>"}</ol>
+      </div>
+    </div>
+    <div class="analysis-card">
+      <h4>最近错题（最多 6 题）</h4>
+      <ol class="analysis-list">${latestWrongs}</ol>
+    </div>
+  `;
+}
+
+function renderWrongAnalysis() {
+  refs.analysisBox.innerHTML = buildWrongAnalysisHtml();
+  refs.analysisBox.classList.remove("hidden");
 }
 
 function saveProgress() {
@@ -305,6 +447,7 @@ function resetQuiz() {
 function clearProgress() {
   localStorage.removeItem(STORAGE_KEY);
   resetQuiz();
+  refs.analysisBox.classList.add("hidden");
   setInfo("已清空历史进度。");
 }
 
@@ -384,6 +527,9 @@ function submitAnswer(options = {}) {
   setResult(`${isCorrect ? "回答正确" : "回答错误"}。标准答案：${q.answer}`, isCorrect);
   updateStats();
   saveProgress();
+  if (!refs.analysisBox.classList.contains("hidden")) {
+    renderWrongAnalysis();
+  }
 }
 
 function prevQuestion() {
@@ -416,6 +562,7 @@ function bindEvents() {
     if (ok) clearProgress();
   });
   refs.refreshBankBtn.addEventListener("click", refreshQuestionBank);
+  refs.analyzeWrongBtn.addEventListener("click", renderWrongAnalysis);
   refs.prevBtn.addEventListener("click", prevQuestion);
   refs.submitBtn.addEventListener("click", submitAnswer);
   refs.nextBtn.addEventListener("click", nextQuestion);

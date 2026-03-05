@@ -98,6 +98,57 @@ body {
   font-size: 14px;
 }
 
+.analysis h3 {
+  margin: 0 0 8px;
+  color: var(--primary-dark);
+  font-size: 18px;
+}
+
+.analysis .summary {
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.analysis-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: #f8fef9;
+}
+
+.analysis-card h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.analysis-list {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.7;
+  font-size: 14px;
+}
+
+.analysis-list strong {
+  color: var(--primary-dark);
+}
+
+.analysis-tip {
+  background: #e8f6eb;
+  border-left: 4px solid var(--primary);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
 .meta {
   color: var(--muted);
   margin-bottom: 8px;

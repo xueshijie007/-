@@ -104,7 +104,7 @@ function renderOptions(question, record) {
   const multi = question.qtype === "多选题";
 
   question.options.forEach((opt) => {
-    const wrap = document.createElement("label");
+    const wrap = document.createElement("div");
     wrap.className = "option-item";
     const checked = record ? normalizeChoiceAnswer(record.userAnswer).includes(opt.key) : false;
     wrap.innerHTML = `
@@ -116,6 +116,11 @@ function renderOptions(question, record) {
       />
       <span>${escapeHtml(opt.key)}. ${escapeHtml(opt.text)}</span>
     `;
+    wrap.addEventListener("click", (e) => {
+      if (e.target instanceof HTMLInputElement) return;
+      const input = wrap.querySelector('input[name="optionAnswer"]');
+      if (input) input.click();
+    });
     list.appendChild(wrap);
   });
   refs.optionArea.appendChild(list);

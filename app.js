@@ -119,16 +119,30 @@ function renderOptions(question, record) {
       <span>${escapeHtml(opt.key)}. ${escapeHtml(opt.text)}</span>
     `;
     wrap.addEventListener("click", (e) => {
-      if (e.target instanceof HTMLInputElement) return;
       const input = wrap.querySelector('input[name="optionAnswer"]');
-      if (input) input.click();
+      if (!input || input.disabled) return;
+
+      if (e.target instanceof HTMLInputElement) {
+        if (!multi) {
+          setTimeout(() => submitAnswer({ silentIfSubmitted: true }), 0);
+        }
+        return;
+      }
+
+      if (multi) {
+        input.click();
+        return;
+      }
+
+      input.checked = true;
+      setTimeout(() => submitAnswer({ silentIfSubmitted: true }), 0);
     });
 
     // 单选/判断题：点选后立即判题
     if (!multi && !record) {
       const input = wrap.querySelector('input[name="optionAnswer"]');
       if (input) {
-        input.addEventListener("change", () => submitAnswer());
+        input.addEventListener("change", () => submitAnswer({ silentIfSubmitted: true }));
       }
     }
     list.appendChild(wrap);
@@ -207,12 +221,15 @@ function checkAnswer(question, userAnswer) {
   return alternatives.includes(user);
 }
 
-function submitAnswer() {
+function submitAnswer(options = {}) {
+  const { silentIfSubmitted = false } = options;
   const q = getCurrentQuestion();
   if (!q) return;
 
   if (state.records.has(q.id)) {
-    alert("这题你已经提交过了，可点下一题或上一题。");
+    if (!silentIfSubmitted) {
+      alert("这题你已经提交过了，可点下一题或上一题。");
+    }
     return;
   }
 

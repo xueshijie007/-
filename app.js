@@ -23,6 +23,7 @@ const refs = {
   refreshBankBtn: document.getElementById("refreshBankBtn"),
   wrongOnlyBtn: document.getElementById("wrongOnlyBtn"),
   highWrongBtn: document.getElementById("highWrongBtn"),
+  exportWrongBtn: document.getElementById("exportWrongBtn"),
   exportHighWrongBtn: document.getElementById("exportHighWrongBtn"),
   clearHighWrongBtn: document.getElementById("clearHighWrongBtn"),
   analyzeWrongBtn: document.getElementById("analyzeWrongBtn"),
@@ -41,6 +42,10 @@ const refs = {
   nextBtn: document.getElementById("nextBtn"),
   resultBox: document.getElementById("resultBox")
 };
+
+function isReviewMode() {
+  return state.wrongOnlyMode || state.highWrongMode;
+}
 
 function escapeHtml(text) {
   return (text || "")
@@ -430,7 +435,7 @@ function renderOptions(question, record) {
   const hasOptions = question.options && question.options.length > 0;
   if (!hasOptions) {
     refs.textAnswerArea.classList.remove("hidden");
-    if (record) refs.textAnswerInput.value = record.userAnswer || "";
+    if (record && !isReviewMode()) refs.textAnswerInput.value = record.userAnswer || "";
     return;
   }
 
@@ -443,7 +448,7 @@ function renderOptions(question, record) {
     const wrap = document.createElement("div");
     wrap.className = "option-item";
     const checked = record ? normalizeChoiceAnswer(record.userAnswer).includes(opt.key) : false;
-    const disabled = !!record;
+    const disabled = !!record && !isReviewMode();
     wrap.innerHTML = `
       <input
         type="${multi ? "checkbox" : "radio"}"
@@ -495,7 +500,7 @@ function renderQuestion() {
   refs.stem.textContent = q.stem;
   renderOptions(q, record);
 
-  if (record) {
+  if (record && !isReviewMode()) {
     const text = `${record.isCorrect ? "回答正确" : "回答错误"}。标准答案：${q.answer}`;
     setResult(text, record.isCorrect);
   } else {
@@ -658,6 +663,40 @@ function exportHighWrongPool() {
   setInfo(`已导出高频错题 ${rows.length} 题。`);
 }
 
+function exportWrongPool() {
+  const ids = getWrongQuestionIdSet();
+  if (!ids.size) {
+    setInfo("当前没有错题可导出。");
+    return;
+  }
+
+  const rows = state.allQuestions
+    .filter((q) => ids.has(q.id))
+    .map((q) => {
+      const record = state.records.get(q.id) || { userAnswer: "", isCorrect: false };
+      return {
+        id: q.id,
+        qtype: q.qtype,
+        subject: q.subject,
+        wrongCount: state.wrongStats.get(q.id) || 0,
+        userAnswer: record.userAnswer || "",
+        stem: q.stem,
+        options: q.options,
+        answer: q.answer
+      };
+    });
+
+  const blob = new Blob([JSON.stringify(rows, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 19).replaceAll(":", "-");
+  a.href = url;
+  a.download = `wrong-questions-${stamp}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  setInfo(`已导出错题 ${rows.length} 题。`);
+}
+
 function clearHighWrongPool() {
   const ids = getHighWrongIdSet();
   if (!ids.size) {
@@ -743,7 +782,7 @@ function submitAnswer(options = {}) {
   const q = getCurrentQuestion();
   if (!q) return;
 
-  if (state.records.has(q.id)) {
+  if (state.records.has(q.id) && !isReviewMode()) {
     if (!silentIfSubmitted) {
       alert("这题你已经提交过了，可点下一题或上一题。");
     }
@@ -801,6 +840,7 @@ function bindQuizEvents() {
   refs.refreshBankBtn.addEventListener("click", refreshQuestionBank);
   refs.wrongOnlyBtn.addEventListener("click", toggleWrongOnlyMode);
   refs.highWrongBtn.addEventListener("click", toggleHighWrongMode);
+  refs.exportWrongBtn.addEventListener("click", exportWrongPool);
   refs.exportHighWrongBtn.addEventListener("click", exportHighWrongPool);
   refs.clearHighWrongBtn.addEventListener("click", () => {
     const ok = confirm(`确认清空高频错题池（错题次数 >= ${HIGH_WRONG_THRESHOLD}）吗？`);
